@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Check-In</title>
+    <!-- Tailwind CSS สำหรับดีไซน์เรียบหรู -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- Supabase JS Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Lucide Icons สำหรับไอคอนสวยๆ -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-4 antialiased text-zinc-900 font-sans">
+
+    <div class="w-full max-w-md bg-white rounded-3xl shadow-xl border border-zinc-100 overflow-hidden">
+        
+        <!-- Header -->
+        <div class="bg-zinc-900 px-6 py-8 text-center relative overflow-hidden">
+            <h1 class="text-xl font-semibold tracking-wide text-white">WORKPLACE CHECK-IN</h1>
+            <p class="text-xs text-zinc-400 mt-1.5 flex items-center justify-center gap-1">
+                <i data-lucide="map-pin" class="w-3.5 h-3.5"></i> รัศมีที่กำหนด: 50 เมตร
+            </p>
+        </div>
+
+        <!-- Form Content -->
+        <div class="p-6 space-y-5">
+            <div>
+                <label class="block text-xs font-medium tracking-wider text-zinc-400 uppercase mb-2">
+                    รหัสพนักงานของคุณ
+                </label>
+                <input
+                    type="text"
+                    id="employeeId"
+                    placeholder="Ex. EMP001"
+                    class="w-full px-4 py-3.5 rounded-xl border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:border-transparent text-base bg-zinc-50/50 font-medium tracking-wide"
+                />
+            </div>
+
+            <!-- แจ้งเตือนสถานะ -->
+            <div id="messageBox" class="hidden p-4 rounded-xl text-sm flex items-start gap-3 transition-all">
+                <div id="messageIcon"></div>
+                <span id="messageText" class="leading-relaxed"></span>
+            </div>
+
+            <!-- ปุ่มกดยิงคำสั่ง -->
+            <div class="grid grid-cols-2 gap-3 pt-2">
+                <button
+                    onclick="handleCheck('check_in')"
+                    id="btnIn"
+                    class="flex items-center justify-center gap-2 bg-zinc-900 text-white py-3.5 px-4 rounded-xl font-medium text-sm hover:bg-zinc-800 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                >
+                    <i data-lucide="check-circle" class="w-4 h-4"></i>
+                    เช็คอินเข้างาน
+                </button>
+                <button
+                    onclick="handleCheck('check_out')"
+                    id="btnOut"
+                    class="flex items-center justify-center gap-2 bg-white text-zinc-900 border border-zinc-200 py-3.5 px-4 rounded-xl font-medium text-sm hover:bg-zinc-50 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                >
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                    เช็คเอาท์ออกงาน
+                </button>
+            </div>
+
+            <!-- ส่วนประวัติย้อนหลัง -->
+            <div class="pt-2 border-t border-zinc-100 flex justify-center">
+                <button
+                    onclick="toggleHistory()"
+                    class="text-xs font-semibold text-zinc-500 hover:text-zinc-900 flex items-center gap-1.5 py-1 px-3 rounded-full hover:bg-zinc-100 transition-all cursor-pointer"
+                >
+                    <i data-lucide="history" class="w-3.5 h-3.5"></i>
+                    <span id="toggleText">ดูประวัติย้อนหลังสำหรับรหัสนี้</span>
+                </button>
+            </div>
+
+            <div id="historySection" class="hidden pt-2 space-y-3 max-h-60 overflow-y-auto pr-1">
+                <h3 class="text-xs font-bold tracking-wider text-zinc-400 uppercase">ประวัติการลงเวลาล่าสุด</h3>
+                <div id="historyList" class="space-y-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 📍 1. ตั้งค่าการเชื่อมต่อ Supabase และ พิกัด Office ตรงนี้ได้เลย
+        const SUPABASE_URL = "https://your-project-id.supabase.co"; 
+        const SUPABASE_ANON_KEY = "your-anon-key-here";
+        
+        // ตัวอย่างพิกัดที่ตั้ง (Latitude, Longitude)
+        const OFFICE_LAT = 7.8921; 
+        const OFFICE_LNG = 98.3662; 
+        const ALLOWED_RADIUS = 50; // รัศมี 50 เมตร
+
+        // เริ่มต้นระบบ Supabase
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        let showHistory = false;
+
+        // เรียกใช้งาน Icon หลังโหลดหน้าเสร็จ
+        lucide.createIcons();
+
+        // ฟังก์ชันคำนวณระยะทาง (Haversine Formula)
+        function getDistanceMeters(lat1, lon1, lat2, lon2) {
+            const R = 6371000;
+            const dLat = (lat2 - lat1) * (Math.PI / 180);
+            const dLon = (lon2 - lon1) * (Math.PI / 180);
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        // แสดงผลการแจ้งเตือนบนหน้าจอ
+        function showMessage(type, text) {
+            const box = document.getElementById('messageBox');
+            const icon = document.getElementById('messageIcon');
+            const txt = document.getElementById('messageText');
+
+            box.className = `p-4 rounded-xl text-sm flex items-start gap-3 transition-all ${
+                type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' : 'bg-rose-50 text-rose-800 border border-rose-100'
+            }`;
+            
+            icon.innerHTML = type === 'success' 
+                ? '<i data-lucide="check-circle" class="w-5 h-5 shrink-0 text-emerald-600 mt-0.5"></i>' 
+                : '<i data-lucide="shield-alert" class="w-5 h-5 shrink-0 text-rose-600 mt-0.5"></i>';
+            
+            txt.innerText = text;
+            box.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        // ฟังก์ชันกดเช็คอิน / เช็คเอาท์
+        function handleCheck(type) {
+            const empId = document.getElementById('employeeId').value.trim();
+            if (!empId) {
+                showMessage('error', 'กรุณากรอกรหัสพนักงาน');
+                return;
+            }
+
+            setLoading(true);
+
+            if (!navigator.geolocation) {
+                showMessage('error', 'เบราว์เซอร์ไม่รองรับ GPS');
+                setLoading(false);
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const { latitude, longitude } = position.coords;
+                    const distance = getDistanceMeters(latitude, longitude, OFFICE_LAT, OFFICE_LNG);
+                    const isWithinRange = distance <= ALLOWED_RADIUS;
+
+                    if (!isWithinRange) {
+                        showMessage('error', `คุณอยู่ห่างเกินกำหนด (${Math.round(distance)} เมตร) ไม่สามารถลงเวลาได้`);
+                        setLoading(false);
+                        return;
+                    }
+
+                    // บันทึกเข้า Supabase ตรงๆ
+                    const { error } = await supabaseClient.from('employee_checkins').insert([
+                        {
+                            employee_id: empId,
+                            check_type: type,
+                            latitude: latitude,
+                            longitude: longitude,
+                            distance_meters: Math.round(distance),
+                            is_within_range: isWithinRange
+                        }
+                    ]);
+
+                    if (error) {
+                        showMessage('error', 'เกิดข้อผิดพลาดในการเชื่อมต่อ Database');
+                    } else {
+                        showMessage('success', `บันทึก ${type === 'check_in' ? 'เช็คอินเข้างาน' : 'เช็คเอาท์ออกงาน'} สำเร็จ!`);
+                        if (showHistory) fetchHistory();
+                    }
+                    setLoading(false);
+                },
+                (error) => {
+                    showMessage('error', 'กรุณาเปิดสิทธิ์เข้าถึงตำแหน่ง GPS บนมือถือของคุณ');
+                    setLoading(false);
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        }
+
+        // ดึงข้อมูลประวัติย้อนหลัง
+        async function fetchHistory() {
+            const empId = document.getElementById('employeeId').value.trim();
+            const listContainer = document.getElementById('historyList');
+            
+            if (!empId) {
+                listContainer.innerHTML = '<p class="text-xs text-zinc-400 text-center py-4">กรุณาระบุรหัสพนักงานก่อน</p>';
+                return;
+            }
+
+            const { data, error } = await supabaseClient
+                .from('employee_checkins')
+                .select('*')
+                .eq('employee_id', empId)
+                .order('checked_at', { ascending: false })
+                .limit(10);
+
+            if (error || !data || data.length === 0) {
+                listContainer.innerHTML = '<p class="text-xs text-zinc-400 text-center py-4">ไม่พบข้อมูลประวัติล่าสุด</p>';
+                return;
+            }
+
+            listContainer.innerHTML = data.map(item => `
+                <div class="flex items-center justify-between p-3 rounded-xl bg-zinc-50 border border-zinc-100 text-xs">
+                    <div class="flex items-center gap-2.5">
+                        <span class="px-2 py-0.5 font-semibold rounded-md ${item.check_type === 'check_in' ? 'bg-emerald-100 text-emerald-800' : 'bg-zinc-200 text-zinc-800'}">
+                            ${item.check_type === 'check_in' ? 'IN' : 'OUT'}
+                        </span>
+                        <span class="font-mono text-zinc-600">${new Date(item.checked_at).toLocaleString('th-TH')}</span>
+                    </div>
+                    <div class="text-zinc-400">ห่าง ${item.distance_meters} ม.</div>
+                </div>
+            `).join('');
+        }
+
+        function toggleHistory() {
+            showHistory = !showHistory;
+            const section = document.getElementById('historySection');
+            const txt = document.getElementById('toggleText');
+
+            if (showHistory) {
+                section.classList.remove('hidden');
+                txt.innerText = 'ซ่อนประวัติย้อนหลัง';
+                fetchHistory();
+            } else {
+                section.classList.add('hidden');
+                txt.innerText = 'ดูประวัติย้อนหลังสำหรับรหัสนี้';
+            }
+        }
+
+        function setLoading(status) {
+            document.getElementById('btnIn').disabled = status;
+            document.getElementById('btnOut').disabled = status;
+            document.getElementById('employeeId').disabled = status;
+        }
+    </script>
+</body>
+</html>
